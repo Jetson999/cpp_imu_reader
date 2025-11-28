@@ -109,6 +109,20 @@ bool IMUReader::start() {
         return false;
     }
 
+    // 唤醒传感器
+    if (!wakeupSensor()) {
+        std::cerr << "唤醒传感器失败" << std::endl;
+        return false;
+    }
+
+    // 启用主动上报
+    if (!enableAutoReport()) {
+        std::cerr << "启用主动上报失败" << std::endl;
+        return false;
+    }
+
+    std::cout << "IMU配置完成，等待数据..." << std::endl;
+
     running_ = true;
     reconnect_count_ = 0;
 
@@ -176,26 +190,38 @@ bool IMUReader::configureIMU() {
     params[9] = subscribe_tag_ & 0xFF;
     params[10] = (subscribe_tag_ >> 8) & 0xFF;
 
+    std::cout << "发送IMU配置命令..." << std::endl;
     if (!sendCommand(params, 11)) {
+        std::cerr << "发送配置命令失败" << std::endl;
         return false;
     }
 
     usleep(200000);  // 等待200ms
+    std::cout << "IMU配置命令已发送" << std::endl;
     return true;
 }
 
 bool IMUReader::wakeupSensor() {
     U8 cmd[1] = {0x03};
+    std::cout << "唤醒传感器..." << std::endl;
     if (!sendCommand(cmd, 1)) {
+        std::cerr << "唤醒传感器命令发送失败" << std::endl;
         return false;
     }
     usleep(200000);  // 等待200ms
+    std::cout << "传感器已唤醒" << std::endl;
     return true;
 }
 
 bool IMUReader::enableAutoReport() {
     U8 cmd[1] = {0x19};
-    return sendCommand(cmd, 1);
+    std::cout << "启用主动上报..." << std::endl;
+    if (!sendCommand(cmd, 1)) {
+        std::cerr << "启用主动上报命令发送失败" << std::endl;
+        return false;
+    }
+    std::cout << "主动上报已启用" << std::endl;
+    return true;
 }
 
 bool IMUReader::openSerial() {
@@ -274,6 +300,8 @@ int IMUReader::sendPacket(const U8* data, size_t len) {
 void IMUReader::readThread() {
     U8 byte;
     size_t bytes_read = 0;
+    size_t total_bytes = 0;
+    auto last_print_time = std::chrono::steady_clock::now();
 
     while (running_) {
         {
@@ -295,7 +323,16 @@ void IMUReader::readThread() {
         }
 
         if (bytes_read > 0) {
+            total_bytes += bytes_read;
             parser_->processByte(byte);
+            
+            // 每5秒打印一次接收统计（仅用于调试）
+            auto now = std::chrono::steady_clock::now();
+            if (std::chrono::duration_cast<std::chrono::seconds>(now - last_print_time).count() >= 5) {
+                std::cout << "\n[调试] 已接收 " << total_bytes << " 字节 (速率: " 
+                          << (total_bytes * 8 / 5) << " 字节/秒)" << std::endl;
+                last_print_time = now;
+            }
         } else {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
