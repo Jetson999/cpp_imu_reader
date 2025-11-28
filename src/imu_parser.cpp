@@ -15,7 +15,8 @@ IMUParser::IMUParser()
     , rx_index_(0)
     , rx_cmd_len_(0)
     , rx_checksum_(0)
-    , target_device_addr_(255) {
+    , target_device_addr_(255)
+    , debug_enabled_(false) {
 }
 
 void IMUParser::setDataCallback(IMUDataCallback callback) {
@@ -72,7 +73,9 @@ bool IMUParser::processByte(U8 byte) {
                 rx_state_ = RX_STATE_END;
             } else {
                 // 校验失败，重置
-                std::cerr << "[调试] 校验失败: 期望=" << (int)byte << " 计算=" << (int)(rx_checksum_ & 0xFF) << std::endl;
+                if (debug_enabled_) {
+                    std::cerr << "[调试] 校验失败: 期望=" << (int)byte << " 计算=" << (int)(rx_checksum_ & 0xFF) << std::endl;
+                }
                 rx_state_ = RX_STATE_WAIT_BEGIN;
             }
             break;
@@ -85,18 +88,24 @@ bool IMUParser::processByte(U8 byte) {
                 U8 addr = rx_buffer_[1];
                 U8 data_len = rx_index_ - 5;
                 if (target_device_addr_ == 255 || target_device_addr_ == addr) {
-                    std::cout << "[调试] 收到完整数据包: 地址=" << (int)addr 
-                              << " 长度=" << (int)data_len 
-                              << " 命令=0x" << std::hex << (int)rx_buffer_[3] << std::dec << std::endl;
+                    if (debug_enabled_) {
+                        std::cout << "[调试] 收到完整数据包: 地址=" << (int)addr 
+                                  << " 长度=" << (int)data_len 
+                                  << " 命令=0x" << std::hex << (int)rx_buffer_[3] << std::dec << std::endl;
+                    }
                     unpackData(&rx_buffer_[3], data_len);
                     return true;
                 } else {
-                    std::cerr << "[调试] 地址不匹配: 期望=" << (int)target_device_addr_ 
-                              << " 收到=" << (int)addr << std::endl;
+                    if (debug_enabled_) {
+                        std::cerr << "[调试] 地址不匹配: 期望=" << (int)target_device_addr_ 
+                                  << " 收到=" << (int)addr << std::endl;
+                    }
                 }
             } else {
-                std::cerr << "[调试] 结束字节错误: 期望=0x4D 收到=0x" 
-                          << std::hex << (int)byte << std::dec << std::endl;
+                if (debug_enabled_) {
+                    std::cerr << "[调试] 结束字节错误: 期望=0x4D 收到=0x" 
+                              << std::hex << (int)byte << std::dec << std::endl;
+                }
             }
             break;
     }
@@ -113,14 +122,18 @@ void IMUParser::unpackData(U8* buf, U8 dLen) {
             break;
         default:
             // 其他命令响应，可在此扩展
-            std::cout << "[调试] 收到未知命令: 0x" << std::hex << (int)buf[0] << std::dec << std::endl;
+            if (debug_enabled_) {
+                std::cout << "[调试] 收到未知命令: 0x" << std::hex << (int)buf[0] << std::dec << std::endl;
+            }
             break;
     }
 }
 
 void IMUParser::parseSensorData(U8* buf, U8 dLen) {
     if (dLen < 7) {
-        std::cerr << "[调试] 数据长度不足: " << (int)dLen << std::endl;
+        if (debug_enabled_) {
+            std::cerr << "[调试] 数据长度不足: " << (int)dLen << std::endl;
+        }
         return;
     }
 

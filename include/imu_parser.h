@@ -81,6 +81,9 @@ public:
     // 设置数据回调函数
     void setDataCallback(IMUDataCallback callback);
 
+    // 设置调试模式
+    void setDebugEnabled(bool enabled) { debug_enabled_ = enabled; }
+
     // 处理接收到的字节
     bool processByte(U8 byte);
 
@@ -115,6 +118,7 @@ private:
     U8 target_device_addr_;
 
     IMUDataCallback data_callback_;
+    bool debug_enabled_;
 };
 
 #endif // IMU_PARSER_H

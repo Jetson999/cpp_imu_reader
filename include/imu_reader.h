@@ -100,6 +100,9 @@ private:
     int reconnect_interval_;
     int max_reconnect_;
     int reconnect_count_;
+
+    // 调试参数
+    bool debug_enabled_;
 };
 
 #endif // IMU_READER_H
