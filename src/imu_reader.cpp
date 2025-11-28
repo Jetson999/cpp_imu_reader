@@ -32,6 +32,8 @@
 #include "imu_reader.h"
 #include <iostream>
 #include <unistd.h>
+#include <sys/stat.h>
+#include <fstream>
 
 IMUReader::IMUReader()
     : running_(false)
@@ -227,7 +229,20 @@ bool IMUReader::enableAutoReport() {
 bool IMUReader::openSerial() {
     std::lock_guard<std::mutex> lock(serial_mutex_);
 
+    // 先检查设备文件是否存在
+    struct stat file_stat;
+    if (stat(port_.c_str(), &file_stat) != 0) {
+        // 设备文件不存在
+        connected_ = false;
+        return false;
+    }
+
     try {
+        // 如果串口已经打开，先关闭
+        if (serial_ && serial_->isOpen()) {
+            serial_->close();
+        }
+
         serial_ = std::make_unique<serial::Serial>(
             port_,
             baudrate_,
@@ -268,14 +283,40 @@ bool IMUReader::reconnect() {
 
     std::cout << "尝试重连 (" << reconnect_count_ << ")..." << std::endl;
 
+    // 等待设备就绪（检查设备文件是否存在）
+    int wait_count = 0;
+    const int max_wait = 50;  // 最多等待5秒（50 * 100ms）
+    while (wait_count < max_wait && running_) {
+        struct stat file_stat;
+        if (stat(port_.c_str(), &file_stat) == 0) {
+            // 设备文件存在，等待一小段时间确保设备完全就绪
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        wait_count++;
+    }
+
+    if (wait_count >= max_wait) {
+        // 设备文件不存在，可能设备未插入
+        return false;
+    }
+
     if (openSerial()) {
         reconnect_count_ = 0;
         parser_->reset();  // 重置解析器状态
+
+        // 等待串口稳定
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
 
         // 重新配置
         if (configureIMU() && wakeupSensor() && enableAutoReport()) {
             std::cout << "重连成功并重新配置" << std::endl;
             return true;
+        } else {
+            // 配置失败，关闭串口
+            std::cerr << "重连后配置失败" << std::endl;
+            closeSerial();
         }
     }
 
@@ -315,6 +356,7 @@ void IMUReader::readThread() {
             try {
                 bytes_read = serial_->read(&byte, 1);
             } catch (const std::exception& e) {
+                // 读取异常，标记为断开，让热插拔线程处理重连
                 std::cerr << "读取串口异常: " << e.what() << std::endl;
                 connected_ = false;
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -340,32 +382,75 @@ void IMUReader::readThread() {
 }
 
 void IMUReader::hotplugThread() {
+    bool last_device_state = false;
+    
     while (running_) {
         std::this_thread::sleep_for(std::chrono::milliseconds(check_interval_));
 
         bool need_reconnect = false;
+        bool device_exists = false;
+
+        // 检查设备文件是否存在
+        struct stat file_stat;
+        if (stat(port_.c_str(), &file_stat) == 0) {
+            device_exists = true;
+        }
 
         {
             std::lock_guard<std::mutex> lock(serial_mutex_);
             
             if (!serial_ || !serial_->isOpen()) {
-                need_reconnect = true;
-            } else {
-                // 检查串口是否仍然可用
-                try {
-                    // 尝试读取可用字节数来检测连接
-                    size_t available = serial_->available();
-                    // 如果读取失败，说明连接断开
-                } catch (...) {
+                // 串口未打开
+                if (device_exists) {
+                    // 设备存在但串口未打开，需要重连
                     need_reconnect = true;
+                }
+            } else {
+                // 串口已打开
+                if (!device_exists) {
+                    // 设备文件不存在，说明设备已拔出
+                    connected_ = false;
+                    if (last_device_state) {
+                        std::cout << "检测到设备拔出: " << port_ << std::endl;
+                    }
+                } else {
+                    // 设备存在，检查串口是否仍然可用
+                    try {
+                        // 尝试读取可用字节数来检测连接
+                        size_t available = serial_->available();
+                        // 如果读取失败，说明连接断开
+                    } catch (...) {
+                        need_reconnect = true;
+                        connected_ = false;
+                        std::cout << "检测到串口异常，尝试重连..." << std::endl;
+                    }
                 }
             }
         }
 
+        // 检测设备重新插入（从不存在变为存在）
+        if (!last_device_state && device_exists && !connected_) {
+            std::cout << "检测到设备重新插入: " << port_ << std::endl;
+            need_reconnect = true;
+        }
+
+        last_device_state = device_exists;
+
         if (need_reconnect && running_) {
-            std::cout << "检测到串口断开，尝试重连..." << std::endl;
+            if (!device_exists) {
+                // 设备不存在，等待设备插入
+                continue;
+            }
+            
+            std::cout << "尝试重连..." << std::endl;
             
             while (running_ && !reconnect()) {
+                // 在重连过程中，检查设备是否仍然存在
+                struct stat file_stat;
+                if (stat(port_.c_str(), &file_stat) != 0) {
+                    // 设备又拔出了，停止重连尝试
+                    break;
+                }
                 std::this_thread::sleep_for(std::chrono::milliseconds(reconnect_interval_));
             }
         }
