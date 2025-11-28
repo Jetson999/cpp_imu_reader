@@ -5,11 +5,12 @@
 ## 特性
 
 - ✅ 标准C++项目结构
-- ✅ 使用项目自带的serial库
+- ✅ 完整依赖包含（serial库已内置，无需外部依赖）
 - ✅ 支持热拔插（自动检测断开并重连）
 - ✅ 配置文件管理（无需重新编译）
 - ✅ 高性能多线程设计
 - ✅ 完整的数据解析和回调机制
+- ✅ 独立工程（所有依赖都在项目内，可直接提交）
 
 ## 项目结构
 
@@ -27,6 +28,8 @@ cpp_imu_reader/
 │   └── imu_reader.cpp
 ├── example/                # 示例程序
 │   └── main.cpp
+├── third_party/            # 第三方库（已包含所有依赖）
+│   └── serial/            # 串口通信库
 └── README.md
 ```
 
@@ -36,7 +39,9 @@ cpp_imu_reader/
 
 - CMake 3.10+
 - C++17编译器 (GCC 7+, Clang 5+)
-- Linux系统（支持Windows/macOS，但需要相应调整）
+- Linux系统（支持Windows/macOS）
+
+**注意**：所有第三方依赖（serial库）已包含在 `third_party/` 目录中，无需额外安装。
 
 ### 编译步骤
 

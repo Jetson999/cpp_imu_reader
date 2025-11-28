@@ -27,3 +27,5 @@ Makefile
 .DS_Store
 Thumbs.db
 
+# 注意：third_party目录包含项目依赖，需要提交到仓库
+
