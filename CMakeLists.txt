@@ -62,6 +62,10 @@ target_link_libraries(imu_reader_lib serial_lib)
 add_executable(imu_reader_example example/main.cpp)
 target_link_libraries(imu_reader_example imu_reader_lib pthread)
 
+# 配置验证程序
+add_executable(verify_subscribe_tag verify_subscribe_tag.cpp)
+target_link_libraries(verify_subscribe_tag imu_reader_lib)
+
 # 安装
 install(TARGETS imu_reader_example DESTINATION bin)
 install(FILES config.ini DESTINATION etc)

@@ -31,6 +31,7 @@
 
 #include "imu_reader.h"
 #include <iostream>
+#include <iomanip>
 #include <unistd.h>
 #include <sys/stat.h>
 #include <fstream>
@@ -188,6 +189,12 @@ bool IMUReader::sendCommand(const U8* cmd, size_t len) {
 }
 
 bool IMUReader::configureIMU() {
+    // 验证 report_rate 范围
+    if (report_rate_ < 0 || report_rate_ > 255) {
+        std::cerr << "错误: report_rate 超出范围 (0-255), 当前值: " << report_rate_ << std::endl;
+        return false;
+    }
+    
     // 构建参数配置命令 (0x12)
     U8 params[11];
     params[0] = 0x12;
@@ -195,15 +202,68 @@ bool IMUReader::configureIMU() {
     params[2] = 255;  // 静态归零速度
     params[3] = 0;  // 动态归零速度
     params[4] = ((barometer_filter_ & 3) << 1) | (compass_on_ ? 1 : 0);
-    params[5] = report_rate_;
+    params[5] = static_cast<U8>(report_rate_);  // 明确类型转换
     params[6] = gyro_filter_;
     params[7] = acc_filter_;
     params[8] = compass_filter_;
     params[9] = subscribe_tag_ & 0xFF;
     params[10] = (subscribe_tag_ >> 8) & 0xFF;
 
+    // 计算数据包大小（根据订阅标签）
+    // 基础数据：命令头(1) + 订阅标签(2) + 时间戳(4) = 7字节
+    int data_packet_size = 7;
+    if (subscribe_tag_ & 0x0001) data_packet_size += 6;  // 加速度不含重力
+    if (subscribe_tag_ & 0x0002) data_packet_size += 6;  // 加速度含重力
+    if (subscribe_tag_ & 0x0004) data_packet_size += 6;  // 角速度
+    if (subscribe_tag_ & 0x0008) data_packet_size += 6;  // 磁力计
+    if (subscribe_tag_ & 0x0010) data_packet_size += 7;  // 温度气压高度
+    if (subscribe_tag_ & 0x0020) data_packet_size += 8;  // 四元数
+    if (subscribe_tag_ & 0x0040) data_packet_size += 6;  // 欧拉角
+    
+    // 完整数据包大小 = 前导码(50) + 包头(3) + 数据体 + 校验(1) + 包尾(1)
+    int full_packet_size = 50 + 3 + data_packet_size + 1 + 1;
+    
+    // 计算理论最大频率
+    // 115200 bps = 11520 字节/秒
+    double max_theoretical_rate = (baudrate_ / 10.0) / full_packet_size;
+    
+    if (debug_enabled_) {
+        std::cout << "  数据包大小分析:" << std::endl;
+        std::cout << "    数据体大小: " << data_packet_size << " 字节" << std::endl;
+        std::cout << "    完整包大小: " << full_packet_size << " 字节" << std::endl;
+        std::cout << "    理论最大频率: " << std::fixed << std::setprecision(1) 
+                  << max_theoretical_rate << " Hz" << std::endl;
+    }
+    
+    if (report_rate_ > max_theoretical_rate * 0.9) {  // 90%阈值
+        std::cerr << "警告: 配置的 report_rate=" << report_rate_ 
+                  << " Hz 可能超过当前波特率 " << baudrate_ 
+                  << " bps 的传输能力" << std::endl;
+        std::cerr << "      当前订阅标签 0x" << std::hex << subscribe_tag_ << std::dec
+                  << " 导致数据包大小为 " << full_packet_size << " 字节" << std::endl;
+        std::cerr << "      理论最大频率约 " << std::fixed << std::setprecision(1) 
+                  << max_theoretical_rate << " Hz" << std::endl;
+        std::cerr << "      建议:" << std::endl;
+        std::cerr << "        1. 降低 report_rate 到 " << (int)(max_theoretical_rate * 0.8) << " Hz 以下" << std::endl;
+        std::cerr << "        2. 减少订阅标签以减少数据包大小（当前: 0x" << std::hex << subscribe_tag_ << std::dec << "）" << std::endl;
+        std::cerr << "        3. 提高波特率（当前: " << baudrate_ << " bps）" << std::endl;
+        std::cerr << "      参考: Python示例使用 subscribe_tag=0x02 可达到250Hz" << std::endl;
+    }
+    
     if (debug_enabled_) {
         std::cout << "发送IMU配置命令..." << std::endl;
+        std::cout << "  配置参数详情:" << std::endl;
+        std::cout << "    report_rate_ (int) = " << report_rate_ << std::endl;
+        std::cout << "    params[5] (U8) = " << (int)params[5] << " (0x" << std::hex << std::setw(2) << std::setfill('0') << (int)params[5] << std::dec << ")" << std::endl;
+        std::cout << "  完整命令包 (十六进制):" << std::endl;
+        std::cout << "    ";
+        for (int i = 0; i < 11; i++) {
+            std::cout << "0x" << std::hex << std::setw(2) << std::setfill('0') << (int)params[i] << std::dec << " ";
+            if ((i + 1) % 8 == 0) std::cout << std::endl << "    ";  // 每8个换行
+        }
+        std::cout << std::endl;
+        std::cout << "  其他参数: device_address=" << (int)device_address_ 
+                  << ", subscribe_tag=0x" << std::hex << subscribe_tag_ << std::dec << std::endl;
     }
     if (!sendCommand(params, 11)) {
         std::cerr << "发送配置命令失败" << std::endl;
@@ -212,7 +272,7 @@ bool IMUReader::configureIMU() {
 
     usleep(200000);  // 等待200ms
     if (debug_enabled_) {
-        std::cout << "IMU配置命令已发送" << std::endl;
+        std::cout << "IMU配置命令已发送 (report_rate=" << report_rate_ << " Hz)" << std::endl;
     }
     return true;
 }
